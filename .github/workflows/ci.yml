@@ -118,6 +118,8 @@ jobs:
                 schema: ${{ secrets.DBT_SCHEMA }}
                 user: ${{ secrets.DBT_USER }}
                 password: ${{ secrets.DBT_PASSWORD }}
+                trust_cert: true  # <--- THÊM DÒNG NÀY
+                encrypt: true     # (Tùy chọn) Thường đi kèm với trust_cert
           EOF
   
       - name: Install DBT dependencies
@@ -243,6 +245,8 @@ jobs:
                 schema: ${{ secrets.DBT_SCHEMA }}
                 user: ${{ secrets.DBT_USER }}
                 password: ${{ secrets.DBT_PASSWORD }}
+                trust_cert: true  # <--- THÊM DÒNG NÀY
+                encrypt: true     # (Tùy chọn) Thường đi kèm với trust_cert
           EOF
 
       - name: Download compiled artifacts

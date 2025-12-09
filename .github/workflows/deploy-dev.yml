@@ -33,9 +33,35 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
+      # --- THÊM ĐOẠN NÀY VÀO ---
+      - name: Install ODBC Driver for SQL Server
+        run: |
+          curl https://packages.microsoft.com/keys/microsoft.asc | sudo apt-key add -
+          curl https://packages.microsoft.com/config/ubuntu/20.0
+
       - name: Install DBT SQLServer adapter
         run: |
           pip install dbt-sqlserver
+
+      - name: Create DBT profiles.yml
+        run: |
+          mkdir -p dbt
+          cat > dbt/profiles.yml << EOF
+          dbt_airflow_project:
+            target: ${{ secrets.DBT_TARGET }}
+            outputs:
+              ${{ secrets.DBT_TARGET }}:
+                type: sqlserver
+                driver: 'ODBC Driver 17 for SQL Server'
+                server: ${{ secrets.DBT_SERVER }}
+                port: ${{ secrets.DBT_PORT }}
+                database: ${{ secrets.DBT_DATABASE }}
+                schema: ${{ secrets.DBT_SCHEMA }}
+                user: ${{ secrets.DBT_USER }}
+                password: ${{ secrets.DBT_PASSWORD }}
+                trust_cert: true  # <--- THÊM DÒNG NÀY
+                encrypt: true     # (Tùy chọn) Thường đi kèm với trust_cert
+          EOF
 
       - name: Validate DBT project
         run: |
@@ -78,6 +104,26 @@ jobs:
         run: |
           echo "Database connection configured for ${{ env.ENVIRONMENT }} environment"
 
+      - name: Create DBT profiles.yml
+        run: |
+          mkdir -p dbt
+          cat > dbt/profiles.yml << EOF
+          dbt_airflow_project:
+            target: ${{ secrets.DBT_TARGET }}
+            outputs:
+              ${{ secrets.DBT_TARGET }}:
+                type: sqlserver
+                driver: 'ODBC Driver 17 for SQL Server'
+                server: ${{ secrets.DBT_SERVER }}
+                port: ${{ secrets.DBT_PORT }}
+                database: ${{ secrets.DBT_DATABASE }}
+                schema: ${{ secrets.DBT_SCHEMA }}
+                user: ${{ secrets.DBT_USER }}
+                password: ${{ secrets.DBT_PASSWORD }}
+                trust_cert: true  # <--- THÊM DÒNG NÀY
+                encrypt: true     # (Tùy chọn) Thường đi kèm với trust_cert
+          EOF
+  
       - name: Install DBT dependencies
         run: |
           cd dbt
