@@ -37,7 +37,9 @@ jobs:
       - name: Install ODBC Driver for SQL Server
         run: |
           curl https://packages.microsoft.com/keys/microsoft.asc | sudo apt-key add -
-          curl https://packages.microsoft.com/config/ubuntu/20.0
+          curl https://packages.microsoft.com/config/ubuntu/$(lsb_release -rs)/prod.list | sudo tee /etc/apt/sources.list.d/mssql-release.list
+          sudo apt-get update
+          sudo ACCEPT_EULA=Y apt-get install -y msodbcsql18 unixodbc-dev
 
       - name: Install DBT SQLServer adapter
         run: |
@@ -52,7 +54,7 @@ jobs:
             outputs:
               ${{ secrets.DBT_TARGET }}:
                 type: sqlserver
-                driver: 'ODBC Driver 17 for SQL Server'
+                driver: 'ODBC Driver 18 for SQL Server'
                 server: ${{ secrets.DBT_SERVER }}
                 port: ${{ secrets.DBT_PORT }}
                 database: ${{ secrets.DBT_DATABASE }}
@@ -92,6 +94,13 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
+      - name: Install ODBC Driver for SQL Server
+        run: |
+          curl https://packages.microsoft.com/keys/microsoft.asc | sudo apt-key add -
+          curl https://packages.microsoft.com/config/ubuntu/$(lsb_release -rs)/prod.list | sudo tee /etc/apt/sources.list.d/mssql-release.list
+          sudo apt-get update
+          sudo ACCEPT_EULA=Y apt-get install -y msodbcsql18 unixodbc-dev
+
       - name: Install dependencies
         run: |
           pip install dbt-sqlserver pyodbc
@@ -113,7 +122,7 @@ jobs:
             outputs:
               ${{ secrets.DBT_TARGET }}:
                 type: sqlserver
-                driver: 'ODBC Driver 17 for SQL Server'
+                driver: 'ODBC Driver 18 for SQL Server'
                 server: ${{ secrets.DBT_SERVER }}
                 port: ${{ secrets.DBT_PORT }}
                 database: ${{ secrets.DBT_DATABASE }}
@@ -202,6 +211,13 @@ jobs:
         uses: actions/setup-python@v4
         with:
           python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install ODBC Driver for SQL Server
+        run: |
+          curl https://packages.microsoft.com/keys/microsoft.asc | sudo apt-key add -
+          curl https://packages.microsoft.com/config/ubuntu/$(lsb_release -rs)/prod.list | sudo tee /etc/apt/sources.list.d/mssql-release.list
+          sudo apt-get update
+          sudo ACCEPT_EULA=Y apt-get install -y msodbcsql18 unixodbc-dev
 
       - name: Install dependencies
         run: |
