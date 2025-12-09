@@ -23,6 +23,8 @@ jobs:
     name: Pre-deployment Validation
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      DBT_DATABASE: ${{ secrets.DBT_DATABASE }}
 
     steps:
       - name: Checkout code
@@ -66,6 +68,8 @@ jobs:
           EOF
 
       - name: Validate DBT project
+        env:
+          DBT_DATABASE: ${{ secrets.DBT_DATABASE }}
         run: |
           cd dbt
           dbt debug --profiles-dir . --target ${{ env.TARGET }} || exit 1
@@ -84,6 +88,8 @@ jobs:
     environment:
       name: development
       url: https://dev.example.com  # Update with your dev environment URL
+    env:
+      DBT_DATABASE: ${{ secrets.DBT_DATABASE }}
 
     steps:
       - name: Checkout code
@@ -139,29 +145,39 @@ jobs:
           dbt deps --profiles-dir . --target ${{ env.TARGET }}
 
       - name: Compile DBT models
+        env:
+          DBT_DATABASE: ${{ secrets.DBT_DATABASE }}
         run: |
           cd dbt
           dbt compile --profiles-dir . --target ${{ env.TARGET }} || exit 1
 
       - name: Run DBT transformations
         id: dbt_run
+        env:
+          DBT_DATABASE: ${{ secrets.DBT_DATABASE }}
         run: |
           cd dbt
           dbt run --profiles-dir . --target ${{ env.TARGET }} || exit 1
 
       - name: Run data quality tests
         if: ${{ !inputs.skip_tests }}
+        env:
+          DBT_DATABASE: ${{ secrets.DBT_DATABASE }}
         run: |
           cd dbt
           dbt test --profiles-dir . --target ${{ env.TARGET }} || exit 1
 
       - name: Check source freshness
         continue-on-error: true
+        env:
+          DBT_DATABASE: ${{ secrets.DBT_DATABASE }}
         run: |
           cd dbt
           dbt source freshness --profiles-dir . --target ${{ env.TARGET }} || true
 
       - name: Generate DBT documentation
+        env:
+          DBT_DATABASE: ${{ secrets.DBT_DATABASE }}
         run: |
           cd dbt
           dbt docs generate --profiles-dir . --target ${{ env.TARGET }} || true
@@ -202,6 +218,8 @@ jobs:
     timeout-minutes: 15
     needs: deploy-dev
     if: success()
+    env:
+      DBT_DATABASE: ${{ secrets.DBT_DATABASE }}
 
     steps:
       - name: Checkout code

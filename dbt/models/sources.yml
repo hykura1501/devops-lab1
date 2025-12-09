@@ -2,7 +2,8 @@ version: 2
 
 sources:
   - name: adventureworks
-    database: AdventureWorks2014
+    # Try using the target database if env var is missing, though env var is preferred
+    database: "{{ env_var('DBT_DATABASE', target.database) }}"
     schema: Sales
     description: "AdventureWorks Sales schema containing sales-related tables. Expected data latency: 12 hours warning, 24 hours error threshold."
     tables:
@@ -26,7 +27,7 @@ sources:
           error_after: {count: 24, period: hour}
 
   - name: adventureworks_production
-    database: AdventureWorks2014
+    database: "{{ env_var('DBT_DATABASE', target.database) }}"
     schema: Production
     description: "AdventureWorks Production schema containing product-related tables. Expected data latency: 12 hours warning, 24 hours error threshold."
     tables:
@@ -50,7 +51,7 @@ sources:
           error_after: {count: 24, period: hour}
 
   - name: adventureworks_person
-    database: AdventureWorks2014
+    database: "{{ env_var('DBT_DATABASE', target.database) }}"
     schema: Person
     description: "AdventureWorks Person schema containing person-related tables. Expected data latency: 12 hours warning, 24 hours error threshold."
     tables:
