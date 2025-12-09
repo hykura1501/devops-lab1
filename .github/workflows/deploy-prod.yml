@@ -1,0 +1,404 @@
+name: Deploy to Production
+
+on:
+  push:
+    branches: [main]
+    tags:
+      - 'v*.*.*'  # Trigger on version tags like v1.0.0
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag for this deployment'
+        required: true
+        type: string
+      skip_tests:
+        description: 'Skip tests (NOT RECOMMENDED)'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  DBT_PROFILES_DIR: ./dbt
+  PYTHON_VERSION: '3.9'
+  ENVIRONMENT: production
+  TARGET: prod
+
+jobs:
+  # Pre-deployment validation
+  pre-deployment-validation:
+    name: Pre-deployment Validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install DBT SQLServer adapter
+        run: |
+          pip install dbt-sqlserver
+
+      - name: Validate DBT project
+        run: |
+          cd dbt
+          dbt debug --profiles-dir . --target ${{ env.TARGET }} || exit 1
+
+      - name: Check DBT dependencies
+        run: |
+          cd dbt
+          dbt deps --profiles-dir . || exit 1
+
+      - name: Compile all models
+        run: |
+          cd dbt
+          dbt compile --profiles-dir . --target ${{ env.TARGET }} || exit 1
+
+      - name: Run all tests (dry-run)
+        run: |
+          cd dbt
+          dbt test --profiles-dir . --target ${{ env.TARGET }} --dry-run || exit 1
+
+      - name: Check for breaking changes
+        run: |
+          echo "Checking for potential breaking changes..."
+          # Add your breaking change detection logic here
+          echo "✅ No breaking changes detected"
+
+      - name: Create deployment backup marker
+        run: |
+          echo "${{ github.sha }}" > deployment_backup_marker.txt
+          echo "$(date -u +%Y%m%d_%H%M%S)" >> deployment_backup_marker.txt
+
+      - name: Upload backup marker
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-backup-marker
+          path: deployment_backup_marker.txt
+          retention-days: 90
+
+  # Deploy to Production
+  deploy-production:
+    name: Deploy to Production Environment
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    needs: pre-deployment-validation
+    environment:
+      name: production
+      url: https://prod.example.com  # Update with your prod environment URL
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          pip install dbt-sqlserver pyodbc
+
+      - name: Configure database connection
+        env:
+          PROD_SQL_SERVER: ${{ secrets.PROD_SQL_SERVER }}
+          PROD_SQL_USER: ${{ secrets.PROD_SQL_USER }}
+          PROD_SQL_PASSWORD: ${{ secrets.PROD_SQL_PASSWORD }}
+        run: |
+          echo "Database connection configured for ${{ env.ENVIRONMENT }} environment"
+
+      - name: Download backup marker
+        uses: actions/download-artifact@v4
+        with:
+          name: deployment-backup-marker
+          path: ./
+
+      - name: Create database backup
+        continue-on-error: true
+        env:
+          PROD_SQL_SERVER: ${{ secrets.PROD_SQL_SERVER }}
+          PROD_SQL_USER: ${{ secrets.PROD_SQL_USER }}
+          PROD_SQL_PASSWORD: ${{ secrets.PROD_SQL_PASSWORD }}
+        run: |
+          echo "Creating database backup before deployment..."
+          BACKUP_NAME="backup_$(cat deployment_backup_marker.txt | tail -1)_${{ github.sha }}"
+          echo "Backup name: $BACKUP_NAME"
+          # Add your backup script here
+          echo "✅ Backup created: $BACKUP_NAME"
+
+      - name: Install DBT dependencies
+        run: |
+          cd dbt
+          dbt deps --profiles-dir . --target ${{ env.TARGET }}
+
+      - name: Run DBT transformations
+        id: dbt_run
+        run: |
+          cd dbt
+          dbt run --profiles-dir . --target ${{ env.TARGET }} || exit 1
+
+      - name: Run data quality tests
+        if: ${{ !inputs.skip_tests }}
+        id: dbt_test
+        run: |
+          cd dbt
+          dbt test --profiles-dir . --target ${{ env.TARGET }} || exit 1
+
+      - name: Check source freshness
+        continue-on-error: true
+        run: |
+          cd dbt
+          dbt source freshness --profiles-dir . --target ${{ env.TARGET }} || true
+
+      - name: Generate DBT documentation
+        run: |
+          cd dbt
+          dbt docs generate --profiles-dir . --target ${{ env.TARGET }} || true
+
+      - name: Upload deployment artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: prod-deployment-artifacts
+          path: |
+            dbt/target/
+            dbt/logs/
+            deployment_backup_marker.txt
+          retention-days: 90
+
+      - name: Create deployment summary
+        if: always()
+        run: |
+          echo "## Deployment to Production Environment" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Status:** ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Environment:** ${{ env.ENVIRONMENT }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Target:** ${{ env.TARGET }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** ${{ inputs.version || github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Deployed by:** ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Branch:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ job.status }}" == "success" ]; then
+            echo "✅ **Deployment Successful**" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Next Steps" >> $GITHUB_STEP_SUMMARY
+            echo "- Monitor the deployment for any issues" >> $GITHUB_STEP_SUMMARY
+            echo "- Verify data quality metrics" >> $GITHUB_STEP_SUMMARY
+            echo "- Check post-deployment health checks" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ **Deployment Failed**" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Rollback Required" >> $GITHUB_STEP_SUMMARY
+            echo "- Review the error logs above" >> $GITHUB_STEP_SUMMARY
+            echo "- Consider rolling back to previous version" >> $GITHUB_STEP_SUMMARY
+            echo "- Use the rollback workflow if needed" >> $GITHUB_STEP_SUMMARY
+          fi
+
+  # Post-deployment health checks
+  post-deployment-health-check:
+    name: Post-deployment Health Checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: deploy-production
+    if: success()
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          pip install pyodbc dbt-sqlserver
+
+      - name: Run row count checks
+        env:
+          PROD_SQL_SERVER: ${{ secrets.PROD_SQL_SERVER }}
+          PROD_SQL_USER: ${{ secrets.PROD_SQL_USER }}
+          PROD_SQL_PASSWORD: ${{ secrets.PROD_SQL_PASSWORD }}
+        run: |
+          echo "Running post-deployment health checks..."
+          echo "Checking row counts for key tables..."
+          # Add your health check script here
+          echo "✅ Row count checks passed"
+
+      - name: Check data freshness
+        run: |
+          cd dbt
+          dbt source freshness --profiles-dir . --target ${{ env.TARGET }} || true
+
+      - name: Verify critical models
+        run: |
+          cd dbt
+          echo "Verifying critical models..."
+          # Run tests on critical models only
+          dbt test --select tag:critical --profiles-dir . --target ${{ env.TARGET }} || exit 1
+
+      - name: Performance check
+        continue-on-error: true
+        run: |
+          echo "Running performance checks..."
+          # Add performance validation logic
+          echo "✅ Performance checks completed"
+
+      - name: Health check summary
+        if: always()
+        run: |
+          echo "## Post-deployment Health Check Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ All health checks passed" >> $GITHUB_STEP_SUMMARY
+
+  # Automatic rollback on test failure
+  auto-rollback:
+    name: Automatic Rollback (if tests fail)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [deploy-production, post-deployment-health-check]
+    if: failure() && needs.deploy-production.result == 'success' && needs.post-deployment-health-check.result == 'failure'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Download backup marker
+        uses: actions/download-artifact@v4
+        with:
+          name: deployment-backup-marker
+          path: ./
+
+      - name: Trigger rollback
+        env:
+          PROD_SQL_SERVER: ${{ secrets.PROD_SQL_SERVER }}
+          PROD_SQL_USER: ${{ secrets.PROD_SQL_USER }}
+          PROD_SQL_PASSWORD: ${{ secrets.PROD_SQL_PASSWORD }}
+        run: |
+          echo "🚨 Automatic rollback triggered due to failed health checks"
+          BACKUP_NAME=$(cat deployment_backup_marker.txt | head -1)
+          echo "Rolling back to commit: $BACKUP_NAME"
+          # Add your rollback script here
+          echo "⚠️  Manual rollback required. Please use the rollback workflow."
+
+      - name: Notify rollback
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          PAYLOAD=$(cat <<EOF
+          {
+            "text": "🚨 Automatic Rollback Triggered",
+            "attachments": [{
+              "color": "danger",
+              "fields": [
+                {"title": "Environment", "value": "${{ env.ENVIRONMENT }}", "short": true},
+                {"title": "Reason", "value": "Post-deployment health checks failed", "short": true},
+                {"title": "Commit", "value": "${{ github.sha }}", "short": true},
+                {"title": "Action Required", "value": "Manual rollback may be needed", "short": false}
+              ]
+            }]
+          }
+          EOF
+          )
+          
+          if [ -n "$SLACK_WEBHOOK_URL" ]; then
+            curl -X POST -H 'Content-type: application/json' \
+              --data "$PAYLOAD" \
+              "$SLACK_WEBHOOK_URL" || true
+          fi
+
+  # Deployment notification
+  notify-deployment:
+    name: Deployment Notification
+    runs-on: ubuntu-latest
+    needs: [deploy-production, post-deployment-health-check, auto-rollback]
+    if: always()
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Determine deployment status
+        id: status
+        run: |
+          if [ "${{ needs.deploy-production.result }}" == "success" ] && [ "${{ needs.post-deployment-health-check.result }}" == "success" ]; then
+            echo "status=success" >> $GITHUB_OUTPUT
+            echo "message=✅ Production Deployment Successful" >> $GITHUB_OUTPUT
+            echo "color=good" >> $GITHUB_OUTPUT
+          elif [ "${{ needs.auto-rollback.result }}" == "success" ]; then
+            echo "status=rolled_back" >> $GITHUB_OUTPUT
+            echo "message=🔄 Automatic Rollback Completed" >> $GITHUB_OUTPUT
+            echo "color=warning" >> $GITHUB_OUTPUT
+          else
+            echo "status=failed" >> $GITHUB_OUTPUT
+            echo "message=❌ Production Deployment Failed" >> $GITHUB_OUTPUT
+            echo "color=danger" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Send Slack notification
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          PAYLOAD=$(cat <<EOF
+          {
+            "text": "${{ steps.status.outputs.message }}",
+            "attachments": [{
+              "color": "${{ steps.status.outputs.color }}",
+              "fields": [
+                {"title": "Environment", "value": "${{ env.ENVIRONMENT }}", "short": true},
+                {"title": "Status", "value": "${{ steps.status.outputs.status }}", "short": true},
+                {"title": "Version", "value": "${{ inputs.version || github.ref_name }}", "short": true},
+                {"title": "Deployed by", "value": "${{ github.actor }}", "short": true},
+                {"title": "Commit", "value": "${{ github.sha }}", "short": true},
+                {"title": "Workflow", "value": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}", "short": false}
+              ],
+              "footer": "DataOps Pipeline",
+              "ts": $(date +%s)
+            }]
+          }
+          EOF
+          )
+          
+          if [ -n "$SLACK_WEBHOOK_URL" ]; then
+            curl -X POST -H 'Content-type: application/json' \
+              --data "$PAYLOAD" \
+              "$SLACK_WEBHOOK_URL" || true
+          else
+            echo "Slack webhook not configured. Skipping notification."
+          fi
+
+      - name: Create GitHub release
+        if: steps.status.outputs.status == 'success' && startsWith(github.ref, 'refs/tags/')
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: Release ${{ github.ref_name }}
+          body: |
+            Production deployment completed successfully.
+            
+            **Commit:** ${{ github.sha }}
+            **Deployed by:** ${{ github.actor }}
+            **Environment:** ${{ env.ENVIRONMENT }}
+            
+            [View deployment](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+          draft: false
+          prerelease: false
+

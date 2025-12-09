@@ -1,0 +1,213 @@
+name: Rollback Deployment
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to rollback'
+        required: true
+        type: choice
+        options:
+          - dev
+          - production
+      commit_sha:
+        description: 'Commit SHA to rollback to (leave empty for previous deployment)'
+        required: false
+        type: string
+      reason:
+        description: 'Reason for rollback'
+        required: true
+        type: string
+
+env:
+  DBT_PROFILES_DIR: ./dbt
+  PYTHON_VERSION: '3.9'
+  ENVIRONMENT: ${{ inputs.environment }}
+  TARGET: ${{ inputs.environment == 'production' && 'prod' || 'dev' }}
+
+jobs:
+  # Validate rollback request
+  validate-rollback:
+    name: Validate Rollback Request
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate commit SHA
+        if: inputs.commit_sha != ''
+        run: |
+          if ! git cat-file -e "${{ inputs.commit_sha }}" 2>/dev/null; then
+            echo "::error::Invalid commit SHA: ${{ inputs.commit_sha }}"
+            exit 1
+          fi
+          echo "✅ Commit SHA is valid: ${{ inputs.commit_sha }}"
+
+      - name: Get rollback commit
+        id: get_commit
+        run: |
+          if [ -n "${{ inputs.commit_sha }}" ]; then
+            ROLLBACK_COMMIT="${{ inputs.commit_sha }}"
+          else
+            # Get the previous deployment commit (you may need to adjust this logic)
+            ROLLBACK_COMMIT=$(git log --oneline -2 | tail -1 | awk '{print $1}')
+          fi
+          echo "commit=$ROLLBACK_COMMIT" >> $GITHUB_OUTPUT
+          echo "Rolling back to commit: $ROLLBACK_COMMIT"
+
+      - name: Display rollback information
+        run: |
+          echo "## Rollback Information" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Environment:** ${{ inputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Target:** ${{ env.TARGET }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Rollback Commit:** ${{ steps.get_commit.outputs.commit }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Reason:** ${{ inputs.reason }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Requested by:** ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+
+  # Execute rollback
+  execute-rollback:
+    name: Execute Rollback
+    runs-on: ubuntu-latest
+    needs: validate-rollback
+    timeout-minutes: 60
+    environment:
+      name: ${{ inputs.environment == 'production' && 'production' || 'development' }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.commit_sha || 'HEAD~1' }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          pip install dbt-sqlserver pyodbc
+
+      - name: Configure database connection
+        env:
+          SQL_SERVER: ${{ inputs.environment == 'production' && secrets.PROD_SQL_SERVER || secrets.DEV_SQL_SERVER }}
+          SQL_USER: ${{ inputs.environment == 'production' && secrets.PROD_SQL_USER || secrets.DEV_SQL_USER }}
+          SQL_PASSWORD: ${{ inputs.environment == 'production' && secrets.PROD_SQL_PASSWORD || secrets.DEV_SQL_PASSWORD }}
+        run: |
+          echo "Database connection configured for ${{ env.ENVIRONMENT }} environment"
+
+      - name: Install DBT dependencies
+        run: |
+          cd dbt
+          dbt deps --profiles-dir . --target ${{ env.TARGET }}
+
+      - name: Compile DBT models
+        run: |
+          cd dbt
+          dbt compile --profiles-dir . --target ${{ env.TARGET }} || exit 1
+
+      - name: Run DBT transformations (rollback)
+        id: dbt_run
+        run: |
+          cd dbt
+          echo "🔄 Rolling back to previous state..."
+          dbt run --profiles-dir . --target ${{ env.TARGET }} || exit 1
+
+      - name: Run data quality tests
+        run: |
+          cd dbt
+          dbt test --profiles-dir . --target ${{ env.TARGET }} || exit 1
+
+      - name: Verify rollback
+        run: |
+          echo "✅ Verifying rollback..."
+          cd dbt
+          dbt test --select tag:critical --profiles-dir . --target ${{ env.TARGET }} || exit 1
+
+      - name: Upload rollback artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rollback-artifacts-${{ inputs.environment }}
+          path: |
+            dbt/target/
+            dbt/logs/
+          retention-days: 90
+
+      - name: Create rollback summary
+        if: always()
+        run: |
+          echo "## Rollback Execution Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Status:** ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Environment:** ${{ env.ENVIRONMENT }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Target:** ${{ env.TARGET }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Rollback Commit:** ${{ inputs.commit_sha || 'Previous deployment' }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Reason:** ${{ inputs.reason }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Executed by:** ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ job.status }}" == "success" ]; then
+            echo "✅ **Rollback Successful**" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "The environment has been rolled back to the previous state." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ **Rollback Failed**" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Manual intervention may be required." >> $GITHUB_STEP_SUMMARY
+          fi
+
+  # Notify rollback
+  notify-rollback:
+    name: Rollback Notification
+    runs-on: ubuntu-latest
+    needs: execute-rollback
+    if: always()
+    timeout-minutes: 5
+
+    steps:
+      - name: Send Slack notification
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          if [ "${{ needs.execute-rollback.result }}" == "success" ]; then
+            STATUS="✅ Successful"
+            COLOR="good"
+          else
+            STATUS="❌ Failed"
+            COLOR="danger"
+          fi
+          
+          PAYLOAD=$(cat <<EOF
+          {
+            "text": "🔄 Rollback $STATUS",
+            "attachments": [{
+              "color": "$COLOR",
+              "fields": [
+                {"title": "Environment", "value": "${{ inputs.environment }}", "short": true},
+                {"title": "Status", "value": "$STATUS", "short": true},
+                {"title": "Rollback Commit", "value": "${{ inputs.commit_sha || 'Previous deployment' }}", "short": true},
+                {"title": "Reason", "value": "${{ inputs.reason }}", "short": false},
+                {"title": "Executed by", "value": "${{ github.actor }}", "short": true},
+                {"title": "Workflow", "value": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}", "short": false}
+              ],
+              "footer": "DataOps Pipeline",
+              "ts": $(date +%s)
+            }]
+          }
+          EOF
+          )
+          
+          if [ -n "$SLACK_WEBHOOK_URL" ]; then
+            curl -X POST -H 'Content-type: application/json' \
+              --data "$PAYLOAD" \
+              "$SLACK_WEBHOOK_URL" || true
+          else
+            echo "Slack webhook not configured. Skipping notification."
+          fi
+

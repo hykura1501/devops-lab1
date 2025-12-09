@@ -1,0 +1,526 @@
+version: 2
+
+models:
+  - name: fct_sales_summary
+    description: |
+      Fact table providing daily and monthly sales summaries with comprehensive KPIs including revenue, profit, channel breakdown, and shipping performance metrics.
+      
+      **Tests Summary:**
+      - Primary key: order_date (not_null, no_future_dates)
+      - Positive values: total_quantity_sold, total_revenue, total_gross_revenue (is_positive)
+      - Accepted values: order_month (1-12)
+    columns:
+      - name: order_date
+        description: "Date dimension - Order date"
+        tests:
+          - not_null
+          - no_future_dates
+      - name: order_year
+        description: "Year of the order"
+        tests:
+          - not_null
+      - name: order_month
+        description: "Month of the order (1-12)"
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 1
+              max_value: 12
+      - name: order_day
+        description: "Day of the order"
+      - name: order_month_name
+        description: "Name of the month"
+      - name: order_day_name
+        description: "Name of the day of week"
+      - name: total_orders
+        description: "Total number of orders on this date"
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+      - name: unique_customers
+        description: "Number of unique customers who placed orders"
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+      - name: unique_products_sold
+        description: "Number of unique products sold"
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+      - name: total_quantity_sold
+        description: "Total quantity of items sold"
+        tests:
+          - not_null
+          - is_positive
+      - name: avg_quantity_per_order
+        description: "Average quantity per order"
+      - name: total_revenue
+        description: "Total revenue for the day"
+        tests:
+          - not_null
+          - is_positive
+      - name: total_gross_revenue
+        description: "Total gross revenue before discounts"
+        tests:
+          - not_null
+          - is_positive
+      - name: total_discount_amount
+        description: "Total discount amount applied"
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+      - name: avg_order_value
+        description: "Average order value"
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+      - name: avg_line_value
+        description: "Average line item value"
+      - name: total_profit
+        description: "Total profit generated"
+      - name: total_net_profit
+        description: "Total net profit after discounts"
+      - name: avg_profit_margin_pct
+        description: "Average profit margin percentage"
+      - name: online_orders
+        description: "Number of online orders"
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+      - name: offline_orders
+        description: "Number of offline orders"
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+      - name: online_revenue
+        description: "Revenue from online orders"
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+      - name: offline_revenue
+        description: "Revenue from offline orders"
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+      - name: online_order_pct
+        description: "Percentage of orders placed online"
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 100
+      - name: shipped_orders
+        description: "Number of shipped orders"
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+      - name: cancelled_orders
+        description: "Number of cancelled orders"
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+      - name: shipment_rate_pct
+        description: "Percentage of orders that were shipped"
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 100
+      - name: orders_with_discount
+        description: "Number of orders with discounts applied"
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+      - name: total_discounts_applied
+        description: "Total amount of discounts applied"
+      - name: avg_discount_pct
+        description: "Average discount percentage"
+      - name: discount_order_pct
+        description: "Percentage of orders with discounts"
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 100
+      - name: monthly_total_orders
+        description: "Total orders for the month (for context)"
+      - name: monthly_total_revenue
+        description: "Total revenue for the month (for context)"
+      - name: monthly_avg_order_value
+        description: "Average order value for the month (for context)"
+      - name: daily_revenue_pct_of_month
+        description: "Daily revenue as percentage of monthly total"
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 100
+
+  - name: dim_customer_metrics
+    description: |
+      Customer dimension table with comprehensive metrics including RFM segmentation, lifetime value, order behavior, and channel preferences.
+      
+      **Tests Summary:**
+      - Primary key: customer_id (not_null, unique)
+      - Positive values: total_lifetime_revenue, total_orders, total_items_purchased (is_positive)
+      - Date validation: first_order_date, last_order_date (no_future_dates, valid_date_range)
+      - Accepted values: customer_segment, channel_preference, RFM scores
+    columns:
+      - name: customer_id
+        description: "Primary key - Unique customer identifier"
+        tests:
+          - not_null
+          - unique
+      - name: person_id
+        description: "Foreign key - Reference to person"
+      - name: account_number
+        description: "Customer account number"
+        tests:
+          - not_null
+      - name: full_name
+        description: "Full customer name"
+        tests:
+          - not_null
+      - name: first_name
+        description: "Customer first name"
+      - name: last_name
+        description: "Customer last name"
+      - name: email_promotion
+        description: "Email promotion preference"
+      - name: territory_id
+        description: "Territory ID"
+      - name: store_id
+        description: "Store ID"
+      - name: total_orders
+        description: "Total number of orders placed by customer"
+        tests:
+          - not_null
+          - is_positive
+      - name: unique_order_dates
+        description: "Number of unique dates customer placed orders"
+      - name: first_order_date
+        description: "Date of customer's first order"
+        tests:
+          - not_null
+          - no_future_dates
+      - name: last_order_date
+        description: "Date of customer's most recent order"
+        tests:
+          - not_null
+          - no_future_dates
+      - name: customer_lifetime_days
+        description: "Number of days between first and last order"
+      - name: orders_per_month
+        description: "Average number of orders per month"
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+      - name: days_since_last_order
+        description: "Number of days since last order"
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+      - name: total_lifetime_revenue
+        description: "Total revenue generated by customer"
+        tests:
+          - not_null
+          - is_positive
+      - name: total_gross_revenue
+        description: "Total gross revenue before discounts"
+      - name: total_discounts_received
+        description: "Total discounts received by customer"
+      - name: avg_order_value
+        description: "Average order value"
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+      - name: max_order_value
+        description: "Maximum order value"
+      - name: min_order_value
+        description: "Minimum order value"
+      - name: total_items_purchased
+        description: "Total number of items purchased"
+        tests:
+          - is_positive
+      - name: avg_items_per_order
+        description: "Average items per order"
+      - name: unique_products_purchased
+        description: "Number of unique products purchased"
+      - name: total_products_quantity
+        description: "Total quantity of products purchased"
+      - name: total_profit_generated
+        description: "Total profit generated from customer"
+      - name: total_net_profit_generated
+        description: "Total net profit after discounts"
+      - name: avg_profit_margin_pct
+        description: "Average profit margin percentage"
+      - name: online_orders
+        description: "Number of online orders"
+      - name: offline_orders
+        description: "Number of offline orders"
+      - name: online_revenue
+        description: "Revenue from online orders"
+      - name: offline_revenue
+        description: "Revenue from offline orders"
+      - name: channel_preference
+        description: "Customer channel preference (Online Preferred, Offline Preferred, Mixed)"
+        tests:
+          - accepted_values:
+              values: ['Online Preferred', 'Offline Preferred', 'Mixed']
+      - name: online_order_pct
+        description: "Percentage of orders placed online"
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 100
+      - name: shipped_orders
+        description: "Number of shipped orders"
+      - name: cancelled_orders
+        description: "Number of cancelled orders"
+      - name: on_time_orders
+        description: "Number of on-time orders"
+      - name: late_orders
+        description: "Number of late orders"
+      - name: on_time_shipment_pct
+        description: "Percentage of orders shipped on time"
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 100
+      - name: orders_with_discount
+        description: "Number of orders with discounts"
+      - name: total_discounts_used
+        description: "Total discounts used"
+      - name: discount_usage_pct
+        description: "Percentage of orders with discounts"
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 100
+      - name: recency_score
+        description: "RFM Recency score (1-5)"
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 1
+              max_value: 5
+      - name: frequency_score
+        description: "RFM Frequency score (1-5)"
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 1
+              max_value: 5
+      - name: monetary_score
+        description: "RFM Monetary score (1-5)"
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 1
+              max_value: 5
+      - name: rfm_score
+        description: "Combined RFM score (3-15)"
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 3
+              max_value: 15
+      - name: customer_segment
+        description: "Customer segment based on RFM analysis (Champion, Loyal Customer, Potential Loyalist, At Risk, Lost, New Customer, Regular)"
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['Champion', 'Loyal Customer', 'Potential Loyalist', 'At Risk', 'Lost', 'New Customer', 'Regular']
+    tests:
+      - valid_date_range:
+          start_date_column: first_order_date
+          end_date_column: last_order_date
+
+  - name: fct_product_performance
+    description: |
+      Fact table providing comprehensive product performance metrics including sales, revenue, profit, customer engagement, and performance classification.
+      
+      **Tests Summary:**
+      - Primary key: product_id (not_null, unique)
+      - Foreign keys: product_id (relationships to stg_products)
+      - Positive values: standard_cost, list_price, total_revenue, total_quantity_sold (is_positive)
+      - Date validation: first_sale_date, last_sale_date (no_future_dates, valid_date_range)
+      - Accepted values: product_lifecycle_status, performance_category
+    columns:
+      - name: product_id
+        description: "Primary key - Unique product identifier"
+        tests:
+          - not_null
+          - unique
+          - relationships:
+              to: ref('stg_products')
+              field: product_id
+      - name: product_number
+        description: "Product number"
+        tests:
+          - not_null
+      - name: product_name
+        description: "Product name"
+        tests:
+          - not_null
+      - name: product_subcategory_id
+        description: "Product subcategory ID"
+      - name: subcategory_name
+        description: "Product subcategory name"
+      - name: product_category_id
+        description: "Product category ID"
+      - name: product_model_id
+        description: "Product model ID"
+      - name: color
+        description: "Product color"
+      - name: size
+        description: "Product size"
+      - name: product_line
+        description: "Product line classification"
+      - name: product_class
+        description: "Product class"
+      - name: product_style
+        description: "Product style"
+      - name: make_flag
+        description: "Flag indicating if product is manufactured in-house"
+      - name: finished_goods_flag
+        description: "Flag indicating if product is a finished good"
+      - name: product_lifecycle_status
+        description: "Product lifecycle status"
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['Active', 'Discontinued', 'Ended', 'Not Started']
+      - name: standard_cost
+        description: "Standard cost of product"
+        tests:
+          - not_null
+          - is_positive
+      - name: list_price
+        description: "List price of product"
+        tests:
+          - not_null
+          - is_positive
+      - name: avg_sale_price
+        description: "Average sale price"
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+      - name: min_sale_price
+        description: "Minimum sale price"
+      - name: max_sale_price
+        description: "Maximum sale price"
+      - name: avg_price_vs_list_pct
+        description: "Average sale price as percentage of list price"
+      - name: avg_discount_from_list_pct
+        description: "Average discount from list price"
+      - name: total_orders
+        description: "Total number of orders containing this product"
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+      - name: unique_customers
+        description: "Number of unique customers who purchased this product"
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+      - name: days_sold
+        description: "Number of unique days product was sold"
+      - name: first_sale_date
+        description: "Date of first sale"
+        tests:
+          - no_future_dates
+      - name: last_sale_date
+        description: "Date of last sale"
+        tests:
+          - no_future_dates
+      - name: sales_period_days
+        description: "Number of days between first and last sale"
+      - name: total_quantity_sold
+        description: "Total quantity of product sold"
+        tests:
+          - not_null
+          - is_positive
+      - name: avg_quantity_per_order
+        description: "Average quantity per order"
+      - name: max_quantity_per_order
+        description: "Maximum quantity in a single order"
+      - name: units_sold_per_day
+        description: "Average units sold per day"
+      - name: total_revenue
+        description: "Total revenue from product sales"
+        tests:
+          - not_null
+          - is_positive
+      - name: total_gross_revenue
+        description: "Total gross revenue before discounts"
+      - name: total_discount_amount
+        description: "Total discount amount applied"
+      - name: avg_line_total
+        description: "Average line total"
+      - name: max_line_total
+        description: "Maximum line total"
+      - name: min_line_total
+        description: "Minimum line total"
+      - name: revenue_per_day
+        description: "Average revenue per day"
+      - name: total_profit
+        description: "Total profit from product sales"
+      - name: total_net_profit
+        description: "Total net profit after discounts"
+      - name: avg_unit_profit
+        description: "Average profit per unit"
+      - name: avg_profit_margin_pct
+        description: "Average profit margin percentage"
+      - name: overall_profit_margin_pct
+        description: "Overall profit margin percentage"
+      - name: profit_margin_pct
+        description: "Profit margin percentage (calculated)"
+      - name: markup_pct
+        description: "Markup percentage over standard cost"
+      - name: online_orders
+        description: "Number of online orders"
+      - name: offline_orders
+        description: "Number of offline orders"
+      - name: online_revenue
+        description: "Revenue from online orders"
+      - name: offline_revenue
+        description: "Revenue from offline orders"
+      - name: online_order_pct
+        description: "Percentage of orders placed online"
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 100
+      - name: online_revenue_pct
+        description: "Percentage of revenue from online orders"
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 100
+      - name: shipped_orders
+        description: "Number of shipped orders"
+      - name: cancelled_orders
+        description: "Number of cancelled orders"
+      - name: shipment_rate_pct
+        description: "Percentage of orders that were shipped"
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 100
+      - name: customers_per_order
+        description: "Average number of customers per order"
+      - name: performance_category
+        description: "Product performance category (Star Product, High Performer, Regular Performer, Low Performer, Underperformer)"
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['Star Product', 'High Performer', 'Regular Performer', 'Low Performer', 'Underperformer']
+      - name: safety_stock_level
+        description: "Safety stock level"
+      - name: reorder_point
+        description: "Reorder point"
+      - name: days_to_manufacture
+        description: "Days to manufacture"
+    tests:
+      - valid_date_range:
+          start_date_column: first_sale_date
+          end_date_column: last_sale_date
+

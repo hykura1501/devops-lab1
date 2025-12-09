@@ -1,0 +1,253 @@
+name: Deploy to Development
+
+on:
+  push:
+    branches: [develop]
+  workflow_dispatch:
+    inputs:
+      skip_tests:
+        description: 'Skip tests (use with caution)'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  DBT_PROFILES_DIR: ./dbt
+  PYTHON_VERSION: '3.9'
+  ENVIRONMENT: dev
+  TARGET: dev
+
+jobs:
+  # Pre-deployment validation
+  pre-deployment-check:
+    name: Pre-deployment Validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install DBT SQLServer adapter
+        run: |
+          pip install dbt-sqlserver
+
+      - name: Validate DBT project
+        run: |
+          cd dbt
+          dbt debug --profiles-dir . --target ${{ env.TARGET }} || exit 1
+
+      - name: Check DBT dependencies
+        run: |
+          cd dbt
+          dbt deps --profiles-dir . || exit 1
+
+  # Deploy to Development
+  deploy-dev:
+    name: Deploy to Development Environment
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: pre-deployment-check
+    environment:
+      name: development
+      url: https://dev.example.com  # Update with your dev environment URL
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          pip install dbt-sqlserver pyodbc
+
+      - name: Configure database connection
+        env:
+          DEV_SQL_SERVER: ${{ secrets.DEV_SQL_SERVER }}
+          DEV_SQL_USER: ${{ secrets.DEV_SQL_USER }}
+          DEV_SQL_PASSWORD: ${{ secrets.DEV_SQL_PASSWORD }}
+        run: |
+          echo "Database connection configured for ${{ env.ENVIRONMENT }} environment"
+
+      - name: Install DBT dependencies
+        run: |
+          cd dbt
+          dbt deps --profiles-dir . --target ${{ env.TARGET }}
+
+      - name: Compile DBT models
+        run: |
+          cd dbt
+          dbt compile --profiles-dir . --target ${{ env.TARGET }} || exit 1
+
+      - name: Run DBT transformations
+        id: dbt_run
+        run: |
+          cd dbt
+          dbt run --profiles-dir . --target ${{ env.TARGET }} || exit 1
+
+      - name: Run data quality tests
+        if: ${{ !inputs.skip_tests }}
+        run: |
+          cd dbt
+          dbt test --profiles-dir . --target ${{ env.TARGET }} || exit 1
+
+      - name: Check source freshness
+        continue-on-error: true
+        run: |
+          cd dbt
+          dbt source freshness --profiles-dir . --target ${{ env.TARGET }} || true
+
+      - name: Generate DBT documentation
+        run: |
+          cd dbt
+          dbt docs generate --profiles-dir . --target ${{ env.TARGET }} || true
+
+      - name: Upload deployment artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dev-deployment-artifacts
+          path: |
+            dbt/target/
+            dbt/logs/
+          retention-days: 30
+
+      - name: Create deployment summary
+        if: always()
+        run: |
+          echo "## Deployment to Development Environment" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Status:** ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Environment:** ${{ env.ENVIRONMENT }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Target:** ${{ env.TARGET }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Deployed by:** ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Branch:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ job.status }}" == "success" ]; then
+            echo "**Deployment Successful**" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "**Deployment Failed**" >> $GITHUB_STEP_SUMMARY
+          fi
+
+  # Post-deployment health checks
+  post-deployment-health-check:
+    name: Post-deployment Health Checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: deploy-dev
+    if: success()
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          pip install pyodbc
+
+      - name: Run row count checks
+        continue-on-error: true
+        env:
+          DEV_SQL_SERVER: ${{ secrets.DEV_SQL_SERVER }}
+          DEV_SQL_USER: ${{ secrets.DEV_SQL_USER }}
+          DEV_SQL_PASSWORD: ${{ secrets.DEV_SQL_PASSWORD }}
+        run: |
+          echo "Running post-deployment health checks..."
+          # Add your health check script here
+          echo "Health checks completed"
+
+      - name: Check data freshness
+        continue-on-error: true
+        run: |
+          cd dbt
+          pip install dbt-sqlserver
+          dbt source freshness --profiles-dir . --target ${{ env.TARGET }} || true
+
+  # Deployment notification
+  notify-deployment:
+    name: Deployment Notification
+    runs-on: ubuntu-latest
+    needs: [deploy-dev, post-deployment-health-check]
+    if: always()
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Send deployment notification
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          if [ "${{ needs.deploy-dev.result }}" == "success" ]; then
+            STATUS="Success"
+            COLOR="good"
+          else
+            STATUS="Failed"
+            COLOR="danger"
+          fi
+          
+          PAYLOAD=$(cat <<EOF
+          {
+            "text": "Development Deployment $STATUS",
+            "attachments": [{
+              "color": "$COLOR",
+              "fields": [
+                {"title": "Environment", "value": "${{ env.ENVIRONMENT }}", "short": true},
+                {"title": "Status", "value": "$STATUS", "short": true},
+                {"title": "Deployed by", "value": "${{ github.actor }}", "short": true},
+                {"title": "Commit", "value": "${{ github.sha }}", "short": true},
+                {"title": "Branch", "value": "${{ github.ref_name }}", "short": true},
+                {"title": "Workflow", "value": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}", "short": false}
+              ]
+            }]
+          }
+          EOF
+          )
+          
+          if [ -n "$SLACK_WEBHOOK_URL" ]; then
+            curl -X POST -H 'Content-type: application/json' \
+              --data "$PAYLOAD" \
+              "$SLACK_WEBHOOK_URL" || true
+          else
+            echo "Slack webhook not configured. Skipping notification."
+          fi
+
+      - name: Comment on PR (if applicable)
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const status = '${{ needs.deploy-dev.result }}' === 'success' ? 'Success' : 'Failed';
+            const body = `## Development Deployment ${status}
+            
+            **Environment:** ${{ env.ENVIRONMENT }}
+            **Status:** ${{ needs.deploy-dev.result }}
+            **Deployed by:** ${{ github.actor }}
+            **Commit:** ${{ github.sha }}
+            
+            [View workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})`;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });
+

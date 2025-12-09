@@ -1,0 +1,338 @@
+version: 2
+
+models:
+  - name: int_customer_orders
+    description: |
+      Intermediate model combining customer and sales order data with business logic transformations. Includes derived fields, normalized enums, and surrogate keys.
+      
+      **Tests Summary:**
+      - Surrogate key: customer_order_surrogate_key (not_null, unique)
+      - Foreign keys: customer_id, sales_order_id (not_null, relationships)
+      - Positive values: total_order_quantity, total_line_total, order_total_due (is_positive)
+      - Date validation: order_date, due_date, ship_date (no_future_dates, valid_date_range)
+      - Accepted values: order_status_name, order_channel, shipping_performance
+    columns:
+      - name: customer_order_surrogate_key
+        description: "Surrogate key combining customer_id, sales_order_id, and order_date for unique identification"
+        tests:
+          - not_null
+          - unique
+      - name: customer_id
+        description: "Foreign key - Reference to customer"
+        tests:
+          - not_null
+          - relationships:
+              to: ref('stg_customers')
+              field: customer_id
+      - name: person_id
+        description: "Foreign key - Reference to person"
+      - name: account_number
+        description: "Customer account number"
+        tests:
+          - not_null
+      - name: first_name
+        description: "Customer first name"
+      - name: last_name
+        description: "Customer last name"
+      - name: middle_name
+        description: "Customer middle name"
+      - name: full_name
+        description: "Derived field - Full customer name (first + middle + last)"
+        tests:
+          - not_null
+      - name: email_promotion
+        description: "Email promotion preference flag"
+      - name: territory_id
+        description: "Customer territory ID"
+      - name: store_id
+        description: "Store ID associated with customer"
+      - name: sales_order_id
+        description: "Foreign key - Reference to sales order"
+        tests:
+          - not_null
+      - name: order_date
+        description: "Date when order was placed"
+        tests:
+          - not_null
+          - no_future_dates
+      - name: due_date
+        description: "Date when order is due"
+        tests:
+          - not_null
+          - no_future_dates
+      - name: ship_date
+        description: "Date when order was shipped"
+        tests:
+          - no_future_dates
+      - name: order_status_name
+        description: "Normalized order status name (In Process, Approved, Backordered, Rejected, Shipped, Cancelled)"
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['In Process', 'Approved', 'Backordered', 'Rejected', 'Shipped', 'Cancelled', 'Unknown']
+      - name: order_status_code
+        description: "Order status code (1-6)"
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 1
+              max_value: 6
+      - name: order_channel
+        description: "Normalized order channel (Online or Offline)"
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['Online', 'Offline']
+      - name: is_online_order
+        description: "Flag indicating if order was placed online"
+      - name: days_until_due
+        description: "Derived field - Number of days from order date to due date"
+      - name: days_to_ship
+        description: "Derived field - Number of days from order date to ship date"
+      - name: shipping_performance
+        description: "Derived field - Shipping performance indicator (On Time, Late, Not Shipped)"
+        tests:
+          - accepted_values:
+              values: ['On Time', 'Late', 'Not Shipped']
+      - name: total_order_quantity
+        description: "Aggregated total quantity ordered per order"
+        tests:
+          - not_null
+          - is_positive
+      - name: total_line_total
+        description: "Aggregated total line total per order"
+        tests:
+          - not_null
+          - is_positive
+      - name: total_calculated_line_total
+        description: "Aggregated calculated line total per order"
+      - name: total_gross_line_total
+        description: "Derived field - Total gross line total before discounts"
+      - name: total_discount_amount
+        description: "Derived field - Total discount amount applied"
+      - name: has_discount_flag
+        description: "Derived field - Flag indicating if any discount was applied"
+      - name: order_subtotal
+        description: "Order subtotal before tax and freight"
+        tests:
+          - is_positive
+      - name: order_tax_amount
+        description: "Order tax amount"
+        tests:
+          - is_positive
+      - name: order_freight
+        description: "Order freight cost"
+        tests:
+          - is_positive
+      - name: order_total_due
+        description: "Total amount due for the order"
+        tests:
+          - not_null
+          - is_positive
+      - name: sales_person_id
+        description: "Sales person ID"
+      - name: order_territory_id
+        description: "Territory ID for the order"
+      - name: header_modified_date
+        description: "Last modification date of order header"
+        tests:
+          - no_future_dates
+      - name: customer_modified_date
+        description: "Last modification date of customer record"
+        tests:
+          - no_future_dates
+    tests:
+      - valid_date_range:
+          start_date_column: order_date
+          end_date_column: due_date
+      - valid_date_range:
+          start_date_column: order_date
+          end_date_column: ship_date
+
+  - name: int_product_sales
+    description: |
+      Intermediate model combining product and sales order data with business logic. Includes profit calculations, lifecycle status, and normalized enums.
+      
+      **Tests Summary:**
+      - Surrogate key: product_sale_surrogate_key (not_null, unique)
+      - Foreign keys: product_id, customer_id, sales_order_id (not_null, relationships)
+      - Positive values: standard_cost, list_price, sale_unit_price, order_quantity (is_positive)
+      - Date validation: order_date, sell_start_date, sell_end_date (no_future_dates, valid_date_range)
+      - Accepted values: order_status_name, order_channel, product_lifecycle_status
+    columns:
+      - name: product_sale_surrogate_key
+        description: "Surrogate key combining product_id, order_date, and sales_order_id"
+        tests:
+          - not_null
+          - unique
+      - name: product_id
+        description: "Foreign key - Reference to product"
+        tests:
+          - not_null
+          - relationships:
+              to: ref('stg_products')
+              field: product_id
+      - name: product_number
+        description: "Product number"
+        tests:
+          - not_null
+      - name: product_name
+        description: "Product name"
+        tests:
+          - not_null
+      - name: product_subcategory_id
+        description: "Product subcategory ID"
+      - name: subcategory_name
+        description: "Product subcategory name"
+      - name: product_category_id
+        description: "Product category ID"
+      - name: product_model_id
+        description: "Product model ID"
+      - name: color
+        description: "Product color"
+      - name: size
+        description: "Product size"
+      - name: product_line
+        description: "Product line classification"
+      - name: product_class
+        description: "Product class"
+      - name: product_style
+        description: "Product style"
+      - name: make_flag
+        description: "Flag indicating if product is manufactured in-house"
+      - name: finished_goods_flag
+        description: "Flag indicating if product is a finished good"
+      - name: standard_cost
+        description: "Standard cost of the product"
+        tests:
+          - not_null
+          - is_positive
+      - name: list_price
+        description: "List price of the product"
+        tests:
+          - not_null
+          - is_positive
+      - name: sale_unit_price
+        description: "Unit price at which product was sold"
+        tests:
+          - not_null
+          - is_positive
+      - name: unit_profit
+        description: "Derived field - Unit profit (sale price - standard cost)"
+      - name: profit_margin_pct
+        description: "Derived field - Profit margin percentage"
+      - name: discount_from_list_pct
+        description: "Derived field - Discount percentage from list price"
+      - name: sales_order_id
+        description: "Foreign key - Reference to sales order"
+        tests:
+          - not_null
+      - name: sales_order_detail_id
+        description: "Sales order detail ID"
+        tests:
+          - not_null
+      - name: order_date
+        description: "Date when order was placed"
+        tests:
+          - not_null
+          - no_future_dates
+      - name: due_date
+        description: "Date when order is due"
+        tests:
+          - no_future_dates
+      - name: ship_date
+        description: "Date when order was shipped"
+        tests:
+          - no_future_dates
+      - name: customer_id
+        description: "Foreign key - Reference to customer"
+        tests:
+          - not_null
+          - relationships:
+              to: ref('stg_customers')
+              field: customer_id
+      - name: order_status_name
+        description: "Normalized order status name"
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['In Process', 'Approved', 'Backordered', 'Rejected', 'Shipped', 'Cancelled', 'Unknown']
+      - name: order_status_code
+        description: "Order status code"
+        tests:
+          - not_null
+      - name: order_channel
+        description: "Normalized order channel"
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['Online', 'Offline']
+      - name: order_quantity
+        description: "Quantity ordered"
+        tests:
+          - not_null
+          - is_positive
+      - name: unit_price
+        description: "Unit price"
+        tests:
+          - not_null
+      - name: unit_price_discount
+        description: "Unit price discount"
+      - name: line_total
+        description: "Line total"
+      - name: calculated_line_total
+        description: "Calculated line total"
+      - name: gross_line_total
+        description: "Derived field - Gross line total before discounts"
+      - name: discount_amount
+        description: "Derived field - Discount amount"
+      - name: line_profit
+        description: "Derived field - Line profit (quantity * unit profit)"
+      - name: net_line_profit
+        description: "Derived field - Net line profit after discounts"
+      - name: sell_start_date
+        description: "Date when product became available for sale"
+        tests:
+          - no_future_dates
+      - name: sell_end_date
+        description: "Date when product sales ended"
+        tests:
+          - no_future_dates
+      - name: discontinued_date
+        description: "Date when product was discontinued"
+        tests:
+          - no_future_dates
+      - name: product_lifecycle_status
+        description: "Derived field - Product lifecycle status (Active, Discontinued, Ended, Not Started)"
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['Active', 'Discontinued', 'Ended', 'Not Started']
+      - name: safety_stock_level
+        description: "Safety stock level"
+      - name: reorder_point
+        description: "Reorder point"
+      - name: days_to_manufacture
+        description: "Days to manufacture"
+      - name: territory_id
+        description: "Territory ID"
+      - name: sales_person_id
+        description: "Sales person ID"
+      - name: detail_modified_date
+        description: "Last modification date of order detail"
+        tests:
+          - no_future_dates
+      - name: product_modified_date
+        description: "Last modification date of product record"
+        tests:
+          - no_future_dates
+    tests:
+      - valid_date_range:
+          start_date_column: sell_start_date
+          end_date_column: sell_end_date
+      - valid_date_range:
+          start_date_column: order_date
+          end_date_column: due_date
+      - valid_date_range:
+          start_date_column: order_date
+          end_date_column: ship_date
